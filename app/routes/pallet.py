@@ -1,25 +1,23 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from app.database import SessionLocal
-from app.models.pallet import Pallet
-from app.models.pallet_split import PalletSplit
-from app.schemas.pallet import PalletCreate
-from app.services.barcode import generate_pallet_code
-from app.services.zpl import generate_zpl
-from app.services.printer import print_zpl
 from sqlalchemy import func
 from datetime import datetime
+
+# Importujeme LEN get_db zo súboru database.py
+from app.database import get_db  
+
+from app.models.pallet import Pallet
+from app.models.pallet_split import PalletSplit
 from app.models.location import Location
 from app.models.pallet_event import PalletEvent
 
+from app.schemas.pallet import PalletCreate, DashboardSummary
+from app.services.barcode import generate_pallet_code
+from app.services.zpl import generate_zpl
+from app.services.printer import print_zpl
+
 router = APIRouter()
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 @router.get("/pallets")
 def get_pallets(db: Session = Depends(get_db)):

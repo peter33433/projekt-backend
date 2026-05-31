@@ -1,3 +1,4 @@
+from typing import Optional
 from pydantic import BaseModel
 
 class PalletCreate(BaseModel):
@@ -25,3 +26,12 @@ class PalletOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+class DashboardSummary(BaseModel):
+    location: str
+    count: int
+
+    class Config:
+        from_attributes = True  # Umožní Pydanticu priamo konvertovať výsledky zo SQLAlchemy        
+
+        
