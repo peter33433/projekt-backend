@@ -137,25 +137,16 @@ def move_pallet(barcode: str, location: str, db: Session = Depends(get_db)):
     return pallet
 
 @router.get("/dashboard/summary")
-def dashboard(db: Session = Depends(get_db)):
-
-    total = db.query(Pallet).count()
-
-    by_location = db.query(Pallet.location, func.count(Pallet.id)) \
-        .group_by(Pallet.location).all()
-
-    by_material = db.query(Pallet.material_type, func.count(Pallet.id)) \
-        .group_by(Pallet.material_type).all()
-
-    by_customer = db.query(Pallet.customer_name, func.count(Pallet.id)) \
-        .group_by(Pallet.customer_name).all()
-
-    return {
-        "total_pallets": total,
-        "by_location": dict(by_location),
-        "by_material": dict(by_material),
-        "by_customer": dict(by_customer)
-    }
+def get_dashboard_summary(db: Session = Depends(get_db)):
+    results = (
+        db.query(Location.code, func.count(Pallet.id).label("pallet_count"))
+        .join(Pallet, Location.id == Pallet.location_id)
+        .group_by(Location.code)
+        .all()
+    )
+    
+    # Preformátovanie výsledkov do pekného slovníka pre frontend
+    return [{"location": row.code, "count": row.pallet_count} for row in results]
 
 @router.patch("/pallets/{barcode}/send-to-sorting")
 def send_to_sorting(barcode: str, db: Session = Depends(get_db)):
@@ -239,20 +230,23 @@ def pallet_history(label: str, db: Session = Depends(get_db)):
 
 @router.post("/seed-locations")
 def seed_locations(db: Session = Depends(get_db)):
-
-    locations = [
-        {"code": "A1-01-01", "zone": "WAREHOUSE"},
-        {"code": "A1-01-02", "zone": "WAREHOUSE"},
-        {"code": "SORTING-1", "zone": "SORTING"},
-        {"code": "LTR1-IN", "zone": "LTR1"},
-        {"code": "LTR2-IN", "zone": "LTR2"},
+    locations_to_seed = [
+        {"code": "A1-01-01", "description": "Sektor A1"},
+        {"code": "A1-01-02", "description": "Sektor A2"},
+        # ... vaše ďalšie lokácie
     ]
 
-    for l in locations:
-        db.add(Location(**l))
-
+    for loc_data in locations_to_seed:
+        # Skontrolujeme, či lokácia s týmto kódom už existuje
+        existing_loc = db.query(Location).filter(Location.code == loc_data["code"]).first()
+        
+        if not existing_loc:
+            # Vložíme len vtedy, ak kód v DB chýba
+            new_loc = Location(code=loc_data["code"], description=loc_data.get("description"))
+            db.add(new_loc)
+            
     db.commit()
-    return {"ok": True}
+    return {"message": "Seedovanie lokácií prebehlo úspešne."}
 
 @router.post("/{barcode}/move/{location_code}")
 def move_pallet(barcode: str, location_code: str, db: Session = Depends(get_db)):
