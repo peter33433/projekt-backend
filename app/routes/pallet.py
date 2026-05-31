@@ -228,51 +228,51 @@ def pallet_history(label: str, db: Session = Depends(get_db)):
 
 @router.post("/seed-locations")
 def seed_locations(db: Session = Depends(get_db)):
-    locations_to_seed = [
-        {"code": "A1-01-01", "description": "Sektor A1"},
-        {"code": "A1-01-02", "description": "Sektor A2"},
-        # ... vaše ďalšie lokácie
-    ]
+    # Použijeme iba kódy, ktoré váš model podporuje
+    locations_to_seed = ["LTR1", "LTR2", "SORT1", "SORT2"]
 
-    for loc_data in locations_to_seed:
-        # Skontrolujeme, či lokácia s týmto kódom už existuje
-        existing_loc = db.query(Location).filter(Location.code == loc_data["code"]).first()
+    for code in locations_to_seed:
+        # Hľadáme podľa kódu
+        existing_loc = db.query(Location).filter(Location.code == code).first()
         
         if not existing_loc:
-            # Vložíme len vtedy, ak kód v DB chýba
-            new_loc = Location(code=loc_data["code"], description=loc_data.get("description"))
+            # Vytvárame objekt IBA s tými vlastnosťami, ktoré model má
+            new_loc = Location(code=code)
             db.add(new_loc)
             
     db.commit()
     return {"message": "Seedovanie lokácií prebehlo úspešne."}
 
-@router.post("/{barcode}/move/{location_code}")
-def move_pallet(barcode: str, location_code: str, db: Session = Depends(get_db)):
-
+@router.post("/{barcode}/move/{location_id}")
+def move_pallet(barcode: str, location_id: int, db: Session = Depends(get_db)):
+    # 1. Vyhľadanie palety podľa čiarového kódu
     pallet = db.query(Pallet).filter(Pallet.barcode == barcode).first()
+    if not pallet:
+        raise HTTPException(status_code=404, detail=f"Paleta s kódom {barcode} nebola nájdená.")
 
-    location = db.query(Location).filter(
-        Location.code == location_code
-    ).first()
+    # 2. Vyhľadanie lokácie podľa číselného ID
+    location = db.query(Location).filter(Location.id == location_id).first()
+    
+    # 🛡️ OCHRANA: Ak lokácia v DB chýba, vrátime 404 namiesto pádu servera!
+    if not location:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Lokácia s ID {location_id} v databáze neexistuje. Najskôr spustite /seed-locations."
+        )
 
-    print("PALLET:")
-    print(pallet)
-
-    print("LOCATION:")
-    print(location)
-
-    print("LOCATION ID:")
-    print(location.id)
-
-    pallet.location = location
-
-
-    print("PALLET LOCATION ID:")
-    print(pallet.location_id)
-
+    # 3. Priradenie novej lokácie (keďže už naisto existuje)
+    pallet.location_id = location.id
+    
+    # 4. Zápis do histórie
+    new_event = PalletEvent(
+        pallet_id=pallet.id,
+        event_type="MOVED",
+        description=f"Presun na pozíciu {location.code}" 
+    )
+    db.add(new_event)
     db.commit()
 
-    return {"ok": True}
+    return {"message": f"Paleta úspešne presunutá na lokáciu {location.code}"}
 
 @router.post("/pallets/{pallet_id}/event")
 def add_event(pallet_id: int, payload: dict, db: Session = Depends(get_db)):
@@ -289,3 +289,9 @@ def add_event(pallet_id: int, payload: dict, db: Session = Depends(get_db)):
     db.refresh(event)
 
     return event
+
+@router.get("/locations")
+def get_all_locations(db: Session = Depends(get_db)):
+    # Vytiahne úplne všetky naseedované lokácie z databázy
+    locations = db.query(Location).all()
+    return locations
