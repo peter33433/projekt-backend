@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime
@@ -118,7 +117,7 @@ def add_weight(barcode: str, weight: float, db: Session = Depends(get_db)):
 
     pallet.weight = weight
     pallet.weight_added_at = datetime.utcnow()
-    pallet.location = "WAREHOUSE"
+    pallet.status = "WEIGHTED"
 
     db.commit()
 
