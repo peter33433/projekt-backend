@@ -2,13 +2,16 @@ from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
-from app.database import engine, Base, get_db
+from app.database import engine, Base, get_db, seed_locations
 from app.models.pallet import Pallet
 from app.models import pallet, pallet_event
 from app.routes import pallet
+from app.routes import shredding
+
 
 app = FastAPI(title="Skladový Systém API")
 
+app.include_router(shredding.router)
 # ✨ NASTAVENIE CORS PRE FRONTEND ✨
 origins = [
     "http://localhost:3000",    # Častý port pre React / Next.js
@@ -27,7 +30,7 @@ app.add_middleware(
 )
 
 Base.metadata.create_all(bind=engine)
-
+seed_locations()
 app.include_router(pallet.router)
 
 
