@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from datetime import datetime
 
 from app.models.pallet import Pallet  
 from app.models.location import Location
@@ -11,73 +10,73 @@ router = APIRouter(
     tags=["Shredding"]
 )
 
-# 1. SPUSTENIE DRTENIA
 @router.post("/start")
 def start_shredding(barcode: str, line_code: str, db: Session = Depends(get_db)):
     """
-    Spustí proces drtenia pre paletu. Presunie ju na lokáciu linky (napr. 'LTR1' alebo 'LTR2').
+    Spustí proces drtenia pre paletu.
     """
-    # 1. Overíme, či zadaná drtiaca linka (lokácia) existuje v systéme
-    location = db.query(Location).filter(Location.code == line_code, Location.is_active == True).first()
+    # Očistíme vstup od prípadných prázdnych znakov/medzier
+    clean_barcode = barcode.strip()
+    clean_line = line_code.strip()
+
+    # 1. Overenie lokácie linky (napr. "HALA-12-LTR1")
+    location = db.query(Location).filter(Location.code == clean_line).first()
     if not location:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Drtiacia linka/lokácia '{line_code}' neexistuje alebo nie je aktívna."
+            detail=f"Drtiacia linka '{clean_line}' neexistuje."
         )
 
-    # 2. Vyhľadáme paletu podľa čiarového kódu
-    pallet = db.query(Pallet).filter(Pallet.barcode == barcode).first()
+    # 2. Vyhľadanie palety (použijeme funkciu func.trim na odstránenie skrytých medzier z DB)
+    from sqlalchemy import func
+    pallet = db.query(Pallet).filter(func.trim(Pallet.barcode) == clean_barcode).first()
+    
     if not pallet:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, 
-            detail="Paleta s týmto čiarovým kódom sa nenašla."
+            detail=f"Paleta s kódom '{clean_barcode}' sa v databáze nenašla. Skontroluj, či sa uložila pri splite."
         )
     
-    # 3. Validácia stavu palety pred drtením
-    # Drviť môžeme len odváženú paletu (WEIGHTED), prijatú (RECEIVED) alebo vytriedenú (SORTED)
-    if pallet.status not in ["WEIGHTED", "SORTED", "RECEIVED", "TRANSFERRED"]:
+    # 3. Očistíme stav z DB od medzier pre bezpečné porovnanie
+    current_status = pallet.status.strip() if pallet.status else ""
+
+    # Povolené stavy pre drvenie (berieme do úvahy aj stavy s medzerami)
+    allowed_statuses = ["WEIGHTED", "SORTED", "RECEIVED", "TRANSFERRED"]
+
+    if current_status not in allowed_statuses:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Paletu nie je možné hneď drviť. Aktuálny stav je: {pallet.status}"
+            detail=f"Paletu {clean_barcode} nie je možné drviť. Aktuálny čistý stav je: '{current_status}'"
         )
 
-    # 4. Aktualizácia údajov palety
+    # 4. Aktualizácia pre začiatok drtenia
     pallet.status = "SHREDDING"
-    pallet.location_id = location.id  # Prepojenie na ID nájdenej lokácie
+    pallet.location_id = location.id
     
     db.commit()
     db.refresh(pallet)
     
-    return {"message": f"Drtenie palety {barcode} úspešne spustené na lokácii {line_code}.", "pallet": pallet}
+    return {"message": f"Drtenie palety {clean_barcode} úspešne spustené.", "pallet": pallet}
 
-
-# 2. UKONČENIE DRTENIA
 @router.post("/end")
 def end_shredding(barcode: str, db: Session = Depends(get_db)):
     """
-    Ukončí proces drtenia, zmení stav palety na CRUSHED a uvoľní ju z linky.
+    Ukončí proces drtenia.
     """
-    # 1. Vyhľadáme paletu
-    pallet = db.query(Pallet).filter(Pallet.barcode == barcode).first()
-    if not pallet:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, 
-            detail="Paleta s týmto čiarovým kódom sa nenašla."
-        )
+    clean_barcode = barcode.strip()
+    from sqlalchemy import func
+    pallet = db.query(Pallet).filter(func.trim(Pallet.barcode) == clean_barcode).first()
     
-    # 2. Kontrola, či sa paleta naozaj v tejto chvíli drtí
-    if pallet.status != "SHREDDING":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Tento materiál sa momentálne nedrtí (nie je v stave SHREDDING)."
-        )
+    if not pallet:
+        raise HTTPException(status_code=404, detail="Paleta sa nenašla.")
+    
+    current_status = pallet.status.strip() if pallet.status else ""
+    if current_status != "SHREDDING":
+        raise HTTPException(status_code=400, detail=f"Materiál sa momentálne nedrtí. Stav: '{current_status}'")
 
-    # 3. Finálna aktualizácia stavu po zdrvení
     pallet.status = "CRUSHED"
-    # Po zdrvení materiálu môžeme lokáciu vynulovať (materiál už fyzicky ako paleta neexistuje)
     pallet.location_id = None  
     
     db.commit()
     db.refresh(pallet)
-    
-    return {"message": f"Materiál z palety {barcode} bol úspešne zdrvený.", "pallet": pallet}
+    return {"message": f"Materiál z palety {clean_barcode} bol úspešne zdrvený.", "pallet": pallet}
