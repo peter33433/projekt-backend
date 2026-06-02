@@ -5,9 +5,8 @@ from sqlalchemy.orm import Session
 from app.database import engine, Base, get_db, seed_locations
 from app.models.pallet import Pallet
 from app.models import pallet, pallet_event
-from app.routes import pallet
-from app.routes import shredding
-
+from app.routes import pallet, shredding, sorting
+from app.routes import customers
 
 app = FastAPI(title="Skladový Systém API")
 
@@ -32,7 +31,8 @@ app.add_middleware(
 Base.metadata.create_all(bind=engine)
 seed_locations()
 app.include_router(pallet.router)
-
+app.include_router(sorting.router)
+app.include_router(customers.router)
 
 @app.get("/")
 def root():

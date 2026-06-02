@@ -35,7 +35,7 @@ def start_shredding(barcode: str, line_code: str, db: Session = Depends(get_db))
     
     # 3. Validácia stavu palety pred drtením
     # Drviť môžeme len odváženú paletu (WEIGHTED), prijatú (RECEIVED) alebo vytriedenú (SORTED)
-    if pallet.status not in ["WEIGHTED", "SORTED", "RECEIVED"]:
+    if pallet.status not in ["WEIGHTED", "SORTED", "RECEIVED", "TRANSFERRED"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Paletu nie je možné hneď drviť. Aktuálny stav je: {pallet.status}"

@@ -146,68 +146,6 @@ def get_dashboard_summary(db: Session = Depends(get_db)):
     # Preformátovanie výsledkov do pekného slovníka pre frontend
     return [{"location": row.code, "count": row.pallet_count} for row in results]
 
-@router.patch("/pallets/{barcode}/send-to-sorting")
-def send_to_sorting(barcode: str, db: Session = Depends(get_db)):
-
-    pallet = db.query(Pallet).filter(Pallet.barcode == barcode).first()
-
-    pallet.location = "SORTING"
-
-    db.commit()
-
-    return pallet
-
-from sqlalchemy.orm import Session
-from fastapi import APIRouter, Depends
-
-
-@router.post("/pallets/{barcode}/split")
-def split_pallet(barcode: str, parts: list[dict], db: Session = Depends(get_db)):
-
-    parent = db.query(Pallet).filter(Pallet.barcode == barcode).first()
-    if not parent:
-        return {"error": "Parent pallet not found"}
-
-    created = []
-
-    for part in parts:
-
-        # 1️⃣ create child
-        child = Pallet(
-            barcode="TEMP",  # dočasne kvôli NOT NULL
-            customer_name=parent.customer_name,
-            material_type=part["material_type"],
-            package_type=parent.package_type,
-            status="RECEIVED",
-            location="WAREHOUSE",
-            parent_id=parent.id
-        )
-
-        db.add(child)
-        db.flush()  # dostane ID
-
-        # 2️⃣ generate final barcode
-        child.barcode = generate_pallet_code(child.id)
-
-        # 3️⃣ SPLIT HISTORY (TOTO TI CHÝBALO)
-        split_record = PalletSplit(
-            parent_label=parent.barcode,
-            child_label=child.barcode
-        )
-        db.add(split_record)
-
-        created.append(child)
-
-    # 4️⃣ update parent
-    parent.is_sorted = 1
-    parent.location = "SORTED"
-
-    db.commit()
-
-    return {
-        "parent": parent.barcode,
-        "children": [c.barcode for c in created]
-    }
 
 @router.get("/{label}/history")
 def pallet_history(label: str, db: Session = Depends(get_db)):
@@ -225,23 +163,6 @@ def pallet_history(label: str, db: Session = Depends(get_db)):
         "split_records": splits,
         "children": children
     }
-
-@router.post("/seed-locations")
-def seed_locations(db: Session = Depends(get_db)):
-    # Použijeme iba kódy, ktoré váš model podporuje
-    locations_to_seed = ["LTR1", "LTR2", "SORT1", "SORT2"]
-
-    for code in locations_to_seed:
-        # Hľadáme podľa kódu
-        existing_loc = db.query(Location).filter(Location.code == code).first()
-        
-        if not existing_loc:
-            # Vytvárame objekt IBA s tými vlastnosťami, ktoré model má
-            new_loc = Location(code=code)
-            db.add(new_loc)
-            
-    db.commit()
-    return {"message": "Seedovanie lokácií prebehlo úspešne."}
 
 @router.post("/{barcode}/move/{location_id}")
 def move_pallet(barcode: str, location_id: int, db: Session = Depends(get_db)):
@@ -295,3 +216,41 @@ def get_all_locations(db: Session = Depends(get_db)):
     # Vytiahne úplne všetky naseedované lokácie z databázy
     locations = db.query(Location).all()
     return locations
+
+@router.post("/pallets/{barcode}/transfer-to-hala12")
+def transfer_to_hala12(barcode: str, db: Session = Depends(get_db)):
+    """
+    Presunie vytriedenú paletu z Haly 9 na Halu 12 pre následné drtenie.
+    """
+    # 1. Vyhľadanie palety podľa čiarového kódu
+    pallet = db.query(Pallet).filter(Pallet.barcode == barcode).first()
+    if not pallet:
+        raise HTTPException(status_code=404, detail="Paleta sa nenašla.")
+        
+    # 2. Overenie, či je paleta pripravená (vytriedená) na presun
+    if pallet.status != "SORTED":
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Na Halu 12 je možné presunúť len vytriedený materiál. Aktuálny stav: {pallet.status}"
+        )
+
+    # 3. Vyhľadanie cieľovej lokácie (sorting zóna na Hale 12)
+    target_location = db.query(Location).filter(Location.code == "HALA-12-SORTING").first()
+    if not target_location:
+        raise HTTPException(status_code=404, detail="Cieľová lokácia HALA-12-SORTING v DB neexistuje.")
+
+    # 4. Aktualizácia údajov
+    pallet.location_id = target_location.id
+    pallet.status = "TRANSFERRED"  # Stav, že paleta úspešne dorazila na Halu 12
+
+    # 5. Zápis presunu do histórie pohybov (PalletEvent)
+    new_event = PalletEvent(
+        pallet_id=pallet.id,
+        event_type="MOVED",
+        description=f"Medzihalový presun z Haly 9 na Halu 12 (Pozícia: {target_location.code})"
+    )
+    db.add(new_event)
+    
+    db.commit()
+    db.refresh(pallet)
+    return {"message": f"Paleta {barcode} bola úspešne presunutá na Halu 12.", "pallet": pallet}    
