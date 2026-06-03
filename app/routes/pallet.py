@@ -10,7 +10,8 @@ from app.models.pallet import Pallet
 from app.models.pallet_split import PalletSplit
 from app.models.location import Location
 from app.models.pallet_event import PalletEvent
-from app.models.order import CustomerOrder
+from app.models.CustomerOrder import CustomerOrder
+
 
 from app.schemas.pallet import PalletCreate, DashboardSummary
 from app.services.barcode import generate_pallet_code
