@@ -10,13 +10,113 @@ from app.models.pallet import Pallet
 from app.models.pallet_split import PalletSplit
 from app.models.location import Location
 from app.models.pallet_event import PalletEvent
+from app.models.order import CustomerOrder
 
 from app.schemas.pallet import PalletCreate, DashboardSummary
 from app.services.barcode import generate_pallet_code
 from app.services.zpl import generate_zpl
 from app.services.printer import print_zpl
 
+import socket
+
 router = APIRouter()
+
+@router.get("/orders/{order_number}/pallets")
+def get_order_pallets(order_number: str, db: Session = Depends(get_db)):
+    order = db.query(CustomerOrder).filter(CustomerOrder.order_number == order_number).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Zakázka nenájdená")
+    return order.pallets  # Logista uvidí zoznam a vie, ktoré sú ešte v stave "PENDING"
+
+# Defonícia fixných váh obalov
+TARE_WEIGHTS = {
+    "paleta": 25.0,
+    "plastovy_box": 35.0,
+    "big_bag": 3.0
+}
+
+@router.post("/orders/{order_number}/print-all-labels")
+def print_all_labels_for_order(order_number: str, ip_tlaciarne: str = "192.168.1.150", db: Session = Depends(get_db)):
+    # 1. Nájdi zakázku pod číslom napr. Xerox 1234
+    order = db.query(CustomerOrder).filter(CustomerOrder.order_number == order_number).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Zakázka nenájdená")
+        
+    # 2. Vyber iba palety, ktoré ešte nemajú vytlačený štítok
+    pending_pallets = db.query(Pallet).filter(Pallet.order_id == order.id, Pallet.status == "PENDING").all()
+    if not pending_pallets:
+        raise HTTPException(status_code=400, detail="Žiadne palety nečakajú na tlač štítkov")
+
+    zpl_hromadny_kod = ""
+    
+    # 3. Prejdi každú paletu, vygeneruj kód a priprav tlač
+    for index, pallet in enumerate(pending_pallets, start=1):
+        # Generujeme unikátny čiarový kód, napr. PAL-123-20260603
+        cas_vytvorenia = datetime.utcnow().strftime('%Y%m%d%H%M')
+        generovany_barcode = f"PAL-{pallet.id}-{cas_vytvorenia}"
+        
+        pallet.barcode = generovany_barcode
+        pallet.status = "LABELED"  # Paleta má štítok, čaká na zváženie
+        
+        # Príprava ZPL kódu pre tlačiareň (Váha a obal sú zatiaľ prázdne)
+        zpl_hromadny_kod += f"""
+        ^XA
+        ^FO50,40^A0N,45,45^FDZakazka: {order.order_number}^FS
+        ^FO50,95^A0N,35,35^FDCislo palety: {index}/{len(pending_pallets)}^FS
+        ^FO50,140^A0N,35,35^FDMaterial: {pallet.material_type}^FS
+        ^FO50,185^A0N,30,30^FDCaká na vazenie...^FS
+        ^FO50,230^BCN,90,Y,N,N^FD{generovany_barcode}^FS
+        ^XZ
+        """
+    
+    # 4. Odoslanie hromadnej tlače na sieťovú tlačiareň na hale
+    try:
+        mysocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        mysocket.settimeout(3.0)
+        mysocket.connect((ip_tlaciarne, 9100))
+        mysocket.send(bytes(zpl_hromadny_kod, "utf-8"))
+        mysocket.close()
+    except Exception as e:
+        # Ak tlačiareň zlyhá, dáta v DB radšej potvrdíme, ale upozorníme používateľa
+        db.commit()
+        raise HTTPException(status_code=503, detail=f"Palety pripravené, ale tlačiareň neodpovedá: {e}")
+
+    db.commit()
+    return {"status": "success", "message": f"Vytlačených {len(pending_pallets)} štítkov. Palety sú pripravené na olepenie."}
+
+@router.patch("/pallets/{pallet_id}/receive")
+def receive_and_weigh_pallet(
+    pallet_id: int, 
+    gross_weight: float, 
+    package_type: str, 
+    location_id: int, 
+    db: Session = Depends(get_db)
+):
+    pallet = db.query(Pallet).filter(Pallet.id == pallet_id).first()
+    if not pallet:
+        raise HTTPException(status_code=404, detail="Paleta nenájdená")
+        
+    if package_type not in TARE_WEIGHTS:
+        raise HTTPException(status_code=400, detail="Neplatný typ obalu")
+
+    # 1. Výpočet čistej váhy
+    tare = TARE_WEIGHTS[package_type]
+    net = gross_weight - tare
+    
+    # 2. Aktualizácia dát palety
+    pallet.barcode = f"PAL-{pallet.id}-{datetime.utcnow().strftime('%m%d%H%M')}" # Generovanie unikátneho kódu pre štítok
+    pallet.gross_weight = gross_weight
+    pallet.tare_weight = tare
+    pallet.net_weight = max(0.0, net) # Ochrana pred zápornou váhou
+    pallet.package_type = package_type
+    pallet.location_id = location_id
+    pallet.status = "WEIGHTED" # Paleta je pripravená na hale
+    
+    db.commit()
+    db.refresh(pallet)
+    
+    # Backend vráti dáta, frontend vygeneruje z tohto JSONu čiarový kód na tlačiareň lejblov
+    return {"message": "Paleta úspešne odvážená a naskladnená", "pallet": pallet}
 
 
 @router.get("/pallets")
@@ -61,27 +161,53 @@ def create_pallet(payload: PalletCreate, db: Session = Depends(get_db)):
         "zpl": zpl
     }
 
-@router.post("/weigh")
-def weigh_pallet():
-    return {"message": "Pallet weighed"}
+# Fixné váhy obalov, ktoré odpočítavame
+TARE_WEIGHTS = {
+    "paleta": 25.0,
+    "plastovy_box": 35.0,
+    "big_bag": 3.0
+}
 
-
-@router.patch("/pallets/{barcode}/status")
-def update_status(barcode: str, status: str, db: Session = Depends(get_db)):
-
+@router.patch("/weigh-and-store")
+def weigh_and_store_pallet(
+    barcode: str, 
+    gross_weight: float, 
+    package_type: str, 
+    location_id: int, 
+    db: Session = Depends(get_db)
+):
+    # 1. Backend vyhľadá paletu podľa naskenovaného čiarového kódu
     pallet = db.query(Pallet).filter(Pallet.barcode == barcode).first()
-
     if not pallet:
-        return {"error": "Pallet not found"}
+        raise HTTPException(status_code=404, detail="Naskenovaná paleta nebola nájdená v systéme")
+        
+    if pallet.status != "LABELED":
+        raise HTTPException(status_code=400, detail=f"Táto paleta už bola zvážená alebo spracovaná (Status: {pallet.status})")
 
-    pallet.status = status
+    if package_type not in TARE_WEIGHTS:
+        raise HTTPException(status_code=400, detail="Zvolený neplatný typ obalu")
+
+    # 2. Automatický výpočet čistej váhy
+    tare = TARE_WEIGHTS[package_type]
+    net = gross_weight - tare
+
+    # 3. Zápis finálnych údajov z váhy
+    pallet.gross_weight = gross_weight
+    pallet.tare_weight = tare
+    pallet.net_weight = max(0.0, net)  # Zabráni zápornej váhe, ak by logista zadal zlú váhu
+    pallet.package_type = package_type
+    pallet.location_id = location_id
+    pallet.status = "STORED"           # Paleta je úspešne odvážená a umiestnená na pozícii
+    
     db.commit()
     db.refresh(pallet)
-
+    
     return {
-        "barcode": pallet.barcode,
-        "status": pallet.status
+        "status": "success", 
+        "message": "Paleta bola úspešne zaevidovaná a odvážená", 
+        "cista_vaha": pallet.net_weight
     }
+
 
 @router.post("/pallets/{barcode}/print")
 def print_pallet(barcode: str, db: Session = Depends(get_db)):
@@ -112,27 +238,15 @@ def scan_pallet(barcode: str, db: Session = Depends(get_db)):
 
 @router.patch("/pallets/{barcode}/weight")
 def add_weight(barcode: str, weight: float, db: Session = Depends(get_db)):
-
     pallet = db.query(Pallet).filter(Pallet.barcode == barcode).first()
-
-    pallet.weight = weight
-    pallet.weight_added_at = datetime.utcnow()
+    if not pallet:
+        raise HTTPException(status_code=404, detail="Pallet not found")
+    # OPRAVENÉ: Používame net_weight z modelu a odstránený neexistujúci weight_added_at
+    pallet.net_weight = weight 
     pallet.status = "WEIGHTED"
-
     db.commit()
-
     return pallet
 
-@router.patch("/pallets/{barcode}/move")
-def move_pallet(barcode: str, location: str, db: Session = Depends(get_db)):
-
-    pallet = db.query(Pallet).filter(Pallet.barcode == barcode).first()
-
-    pallet.location = location
-
-    db.commit()
-
-    return pallet
 
 @router.get("/dashboard/summary")
 def get_dashboard_summary(db: Session = Depends(get_db)):
@@ -147,22 +261,13 @@ def get_dashboard_summary(db: Session = Depends(get_db)):
     return [{"location": row.code, "count": row.pallet_count} for row in results]
 
 
+# OPRAVENÉ: Čisté hľadanie histórie splitov cez parent_id (bez PalletSplit)
 @router.get("/{label}/history")
 def pallet_history(label: str, db: Session = Depends(get_db)):
-
-    splits = db.query(PalletSplit).filter(
-        PalletSplit.parent_label == label
-    ).all()
-
-    children = db.query(Pallet).filter(
-        Pallet.parent_id == db.query(Pallet.id).filter(Pallet.barcode == label).scalar_subquery()
-    ).all()
-
-    return {
-        "parent": label,
-        "split_records": splits,
-        "children": children
-    }
+    parent_pallet = db.query(Pallet).filter(Pallet.barcode == label).first()
+    if not parent_pallet:
+        raise HTTPException(status_code=404, detail="Parent pallet not found")
+    return {"parent": label, "children": parent_pallet.children}
 
 @router.post("/{barcode}/move/{location_id}")
 def move_pallet(barcode: str, location_id: int, db: Session = Depends(get_db)):

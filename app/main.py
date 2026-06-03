@@ -2,38 +2,41 @@ from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
-from app.database import engine, Base, get_db, seed_locations
-from app.models.pallet import Pallet
-from app.models import pallet, pallet_event
-from app.routes import pallet, shredding, sorting
-from app.routes import customers
+# Import databázy, seederu a tvojich modelov
+from app.database import engine, Base, seed_locations
+from app import models 
+from app.routes import pallet, shredding, sorting, customers
 
+# 1. Inicializácia aplikácie
 app = FastAPI(title="Skladový Systém API")
 
-app.include_router(shredding.router)
-# ✨ NASTAVENIE CORS PRE FRONTEND ✨
+# 2. Nastavenie CORS pre frontend
 origins = [
-    "http://localhost:3000",    # Častý port pre React / Next.js
-    "http://localhost:5173",    # Častý port pre Vite / Vue / Svelte
+    "http://localhost:3000",
+    "http://localhost:5173",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:5173",
-    "*"   
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,       # Povolí požiadavky z týchto adries
+    allow_origins=origins, 
     allow_credentials=True,
-    allow_methods=["*"],         # Povolí všetky metódy (GET, POST, PATCH...)
-    allow_headers=["*"],         # Povolí všetky hlavičky
+    allow_methods=["*"], 
+    allow_headers=["*"],
 )
 
+# 3. Inicializácia databázy a seeding (modely sú už načítané vďaka importu hore)
 Base.metadata.create_all(bind=engine)
 seed_locations()
+
+# 4. Registrácia všetkých routerov
+app.include_router(shredding.router)
 app.include_router(pallet.router)
 app.include_router(sorting.router)
 app.include_router(customers.router)
 
+# 5. Root endpoint
 @app.get("/")
 def root():
     return {"message": "Recycling WMS API running"}
