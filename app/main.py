@@ -1,10 +1,11 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
 from app.database import engine, Base, seed_locations
 from app import models
-# Import nového auth modulu
-from app.routes import pallet, shredding, sorting, customers, auth
+# Import všech routerů včetně auth a shipping
+from app.routes import pallet, shredding, sorting, customers, auth, shipping, recycled
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -22,12 +23,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Registrace routerů včetně auth
+# Registrace všech funkčních routerů aplikace
 app.include_router(shredding.router)
 app.include_router(pallet.router)
 app.include_router(sorting.router)
 app.include_router(customers.router)
 app.include_router(auth.router)
+app.include_router(shipping.router)
+app.include_router(recycled.router)
 
 @app.get("/")
 def root():

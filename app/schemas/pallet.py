@@ -1,37 +1,45 @@
-from typing import Optional
 from pydantic import BaseModel
+from typing import Optional, List
+from datetime import datetime
 
+# Společný základ pro paletu
+class PalletBase(BaseModel):
+    packaging_type: Optional[str] = "paleta"
+    material_type: Optional[str] = None
+
+# Schéma pro vytvoření nové palety (při příjmu)
 class PalletCreate(BaseModel):
-    customer_name: str
-    material_type: str
-    package_type: str
+    customer_order_id: int
+    packaging_type: str
 
+# Schéma pro vážení a naskladnění palety
+class PalletWeighAndStore(BaseModel):
+    gross_weight: float
+    location_code: str
 
-class PalletOut(BaseModel):
+# Schéma pro response (výstup z API)
+class PalletResponse(PalletBase):
     id: int
-    barcode: str
-    customer_name: str
-    material_type: str
-    package_type: str
+    barcode: Optional[str] = None
+    customer_order_id: int
+    gross_weight: Optional[float] = None
+    net_weight: Optional[float] = None
     status: str
-
-    location_id: int | None = None
-    parent_id: int | None = None
-
-    gross_weight: float | None = None
-    net_weight: float | None = None
-    tare_weight: float | None = None
-
-    is_sorted: int | None = None
+    location_id: Optional[int] = None
+    shipment_id: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
 
     class Config:
         from_attributes = True
 
-class DashboardSummary(BaseModel):
-    location: str
-    count: int
+# Schémata pro operaci Třídění (Sorting Split)
+class PalletSplitItem(BaseModel):
+    material_type: str
+    gross_weight: float
+    packaging_type: str
 
-    class Config:
-        from_attributes = True  # Umožní Pydanticu priamo konvertovať výsledky zo SQLAlchemy        
+class PalletSplitRequest(BaseModel):
+    items: List[PalletSplitItem]
 
         

@@ -11,21 +11,28 @@ class Pallet(Base):
     customer_order_id = Column(Integer, ForeignKey("customer_orders.id"), nullable=False)
     
     # Informácie o materiáli a obale
-    material_type = Column(String, nullable=True)  # Pridané pre podporu triedenia (sorting split)
-    packaging_type = Column(String, nullable=True)  # napr. paleta, plastovy_box, big_bag
+    material_type = Column(String, nullable=True)
+    packaging_type = Column(String, nullable=True)  # paleta, plastovy_box, big_bag
     
     # Váhové údaje
     gross_weight = Column(Float, nullable=True)
     net_weight = Column(Float, nullable=True)
     
     # Stav palety a umiestnenie
-    status = Column(String, default="PENDING")  # PENDING, LABELED, STORED, IN_SORTING, SORTED, SHREDDING, CRUSHED, RETURNED_TO_CUSTOMER
+    status = Column(String, default="PENDING")
     location_id = Column(Integer, ForeignKey("locations.id"), nullable=True)
+    
+    # Prepojenie na expedíciu (Pridané pre podporu shipping.py)
+    shipment_id = Column(Integer, ForeignKey("shipments.id"), nullable=True)
     
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    # RELÁCIE (Propojení s ostatními modely pro bezchybný chod API)
+    # RELÁCIE
     customer_order = relationship("CustomerOrder", back_populates="pallets")
     location = relationship("Location", back_populates="pallets")
     events = relationship("PalletEvent", back_populates="pallet", cascade="all, delete-orphan")
+    
+    # Nová relácia smerom k expedícii
+    shipment = relationship("Shipment", back_populates="pallets")
+
