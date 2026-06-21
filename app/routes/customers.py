@@ -1,49 +1,46 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-
-from app.models.pallet import Pallet  
+from app.models.pallet import Pallet
+from app.models.location import Location
 from app.models.pallet_event import PalletEvent
 from app.database import get_db
 
-router = APIRouter(
-    prefix="/customers",
-    tags=["Customers"]
-)
+router = APIRouter(prefix="/customers", tags=["Customers"])
 
 @router.post("/release-to-customer")
 def release_to_customer(barcode: str, db: Session = Depends(get_db)):
-    """
-    Vydá vysortovaný materiál z Haly 9 späť zákazníkovi, ktorý si ho vyžiadal.
-    """
-    # 1. Vyhľadanie palety podľa čiarového kódu
+    # 1. Vyhľadanie palety
     pallet = db.query(Pallet).filter(Pallet.barcode == barcode).first()
     if not pallet:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, 
-            detail="Paleta s týmto kódom sa nenašla."
-        )
+        raise HTTPException(status_code=404, detail="Paleta sa nenašla.")
 
-    # 2. Kontrola, či je paleta v správnom stave na výdaj
-    # Vydávame len materiál, ktorý už prešiel triedením (SORTED)
-    if pallet.status != "SORTED":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
-            detail=f"Zákazníkovi je možné vydať len kompletne vytriedený materiál. Aktuálny stav: {pallet.status}"
-        )
+    # 2. Kontrola stavu
+    if pallet.status not in ["SORTED", "CRUSHED", "STORED"]:
+        raise HTTPException(status_code=400, detail="Materiál nemožno vydať.")
 
-    # 3. Aktualizácia stavu palety
+    # 3. Uvoľnenie lokácie (Kritická oprava)
+    if pallet.location_id:
+        location = db.query(Location).filter(Location.id == pallet.location_id).first()
+        if location:
+            location.status = "empty" # Zmena na 'empty'
+
+    # 4. Aktualizácia palety
     pallet.status = "RETURNED_TO_CUSTOMER"
-    pallet.location_id = None  # Materiál opúšťa sklad, uvoľníme skladovú pozíciu
+    pallet.location_id = None 
 
-    # 4. Zápis do histórie pohybov (PalletEvent)
+    # Bezpečná oprava popisu (odstránenie chyby s customer_name)
+    order_info = f"Objednávka ID: {pallet.customer_order_id}"
+    if hasattr(pallet, 'customer_order') and pallet.customer_order:
+        order_info = f"Číslo objednávky: {pallet.customer_order.order_number}"
+
+    # 5. História a commit
     new_event = PalletEvent(
         pallet_id=pallet.id,
         event_type="RELEASED",
-        description=f"Materiál bol úspešne odovzdaný a vydaný zákazníkovi: {pallet.customer_name}"
+        description=f"Vydané: {order_info}"
     )
     db.add(new_event)
-
     db.commit()
     db.refresh(pallet)
-    
-    return {"message": f"Materiál z palety {barcode} bol úspešne odovzdaný zákazníkovi.", "pallet": pallet}
+
+    return {"message": "Materiál bol úspešne odovzdaný.", "pallet": pallet}

@@ -20,10 +20,15 @@ def get_db():
 
 # Náš nový seeder pre Halu 9 a Halu 12
 def seed_locations():
-    from app.models.location import Location  
-    db = SessionLocal()                       
+    from app.models.location import Location
+    db = SessionLocal()
     try:
-        # 1. Fixné body na Hale 12 a príjem na Hale 9
+        # 1. Načteme všechny existující kódy z DB jedním dotazem pro rychlé ověření v paměti
+        existing_codes = {row[0] for row in db.query(Location.code).all()}
+        
+        locations_to_create = []
+
+        # 2. Definice fixních bodů
         fixed_locations = [
             {"code": "LTR1", "zone": "Hala 12", "status": "empty"},
             {"code": "LTR2", "zone": "Hala 12", "status": "empty"},
@@ -32,19 +37,24 @@ def seed_locations():
         ]
         
         for loc_data in fixed_locations:
-            exists = db.query(Location).filter(Location.code == loc_data["code"]).first()
-            if not exists:
-                db.add(Location(**loc_data))
-                
-        # 2. Vygenerovanie regálov pre Halu 9 (5 regálov x 3 police)
+            if loc_data["code"] not in existing_codes:
+                locations_to_create.append(Location(**loc_data))
+
+        # 3. Vygenerování regálů pro Halu 9 (5 regálů x 3 police)
         for regal in range(1, 6):
             for polica in range(1, 4):
                 code = f"H9-R{regal}-P{polica}"
-                exists = db.query(Location).filter(Location.code == code).first()
-                if not exists:
-                    db.add(Location(code=code, zone="Hala 9", status="empty"))
-                    
-        db.commit()
+                if code not in existing_codes:
+                    locations_to_create.append(
+                        Location(code=code, zone="Hala 9", status="empty")
+                    )
+
+        # 4. Hromadné uložení pouze pokud existují nové lokace
+        if locations_to_create:
+            db.add_all(locations_to_create)
+            db.commit()
+            print(f"Úspěšně naseedováno {len(locations_to_create)} nových lokací.")
+            
     except Exception as e:
         print(f"Chyba pri seedovaní lokácií: {e}")
         db.rollback()

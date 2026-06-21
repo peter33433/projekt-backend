@@ -1,4 +1,3 @@
-# app/models/pallet.py
 from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -8,24 +7,25 @@ class Pallet(Base):
     __tablename__ = "pallets"
 
     id = Column(Integer, primary_key=True, index=True)
-    # Kancelária vygeneruje dočasný kód alebo ID, logista po zvážení dostane finálny barcode
-    barcode = Column(String, unique=True, index=True, nullable=True) 
+    barcode = Column(String, unique=True, index=True, nullable=True)
+    customer_order_id = Column(Integer, ForeignKey("customer_orders.id"), nullable=False)
     
-    order_id = Column(Integer, ForeignKey("customer_orders.id"), nullable=False)
-    material_type = Column(String, nullable=False) # Mix, Cartridge, PS, HDPE...
+    # Informácie o materiáli a obale
+    material_type = Column(String, nullable=True)  # Pridané pre podporu triedenia (sorting split)
+    packaging_type = Column(String, nullable=True)  # napr. paleta, plastovy_box, big_bag
     
-    # --- Váhová logika (vypĺňa logista na váhe) ---
-    gross_weight = Column(Float, default=0.0)      # Váha s obalom
-    tare_weight = Column(Float, default=0.0)       # Váha obalu (podľa package_type)
-    net_weight = Column(Float, default=0.0)        # Čistá váha (gross - tare)
-    package_type = Column(String, nullable=True)   # paleta (25kg), plastovy_box (35kg), big_bag (3kg)
+    # Váhové údaje
+    gross_weight = Column(Float, nullable=True)
+    net_weight = Column(Float, nullable=True)
     
-    # --- Stavy palety ---
-    # PENDING (vytvorená v kancelárii) -> WEIGHTED (odvážená logistom) -> SHREDDED / SORTED_DONE
-    status = Column(String, default="PENDING") 
-    
+    # Stav palety a umiestnenie
+    status = Column(String, default="PENDING")  # PENDING, LABELED, STORED, IN_SORTING, SORTED, SHREDDING, CRUSHED, RETURNED_TO_CUSTOMER
     location_id = Column(Integer, ForeignKey("locations.id"), nullable=True)
     
-    # Prepojenia
-    order = relationship("CustomerOrder", back_populates="pallets")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # RELÁCIE (Propojení s ostatními modely pro bezchybný chod API)
+    customer_order = relationship("CustomerOrder", back_populates="pallets")
     location = relationship("Location", back_populates="pallets")
+    events = relationship("PalletEvent", back_populates="pallet", cascade="all, delete-orphan")
