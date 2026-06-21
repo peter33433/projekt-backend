@@ -5,6 +5,7 @@ from app.models.location import Location
 from app.models.pallet_event import PalletEvent
 from app.database import get_db
 
+# 🔥 TENTO ŘÁDEK CHYBĚL A ZPŮSOBOVAL PÁD BACKENDU:
 router = APIRouter(prefix="/customers", tags=["Customers"])
 
 @router.post("/release-to-customer")
@@ -18,11 +19,11 @@ def release_to_customer(barcode: str, db: Session = Depends(get_db)):
     if pallet.status not in ["SORTED", "CRUSHED", "STORED"]:
         raise HTTPException(status_code=400, detail="Materiál nemožno vydať.")
 
-    # 3. Uvoľnenie lokácie (Kritická oprava)
+    # 3. Uvoľnenie lokácie
     if pallet.location_id:
         location = db.query(Location).filter(Location.id == pallet.location_id).first()
         if location:
-            location.status = "empty" # Zmena na 'empty'
+            location.status = "empty"
 
     # 4. Aktualizácia palety
     pallet.status = "RETURNED_TO_CUSTOMER"

@@ -12,13 +12,13 @@ async def lifespan(app: FastAPI):
     seed_locations()
     yield
 
-# Inicializácia aplikácie
 app = FastAPI(title="Skladový Systém API", lifespan=lifespan)
 
+# 🔥 DEFINITIVNÍ ODSTRANĚNÍ CORS BLOKACE: Povolíme absolutně vše bez omezení credentials
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],
-    allow_credentials=True,
+    allow_origins=["*"],  # Hvězdička povolí jakýkoliv port i IP
+    allow_credentials=False,  # Musí být False pro "*"
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -32,34 +32,20 @@ app.include_router(auth.router)
 app.include_router(shipping.router)
 app.include_router(recycled.router)
 
-# 🔐 Správna úprava OpenAPI schémy pre zobrazenie tlačidla Authorize
+# Custom OpenAPI schéma
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
-    
     from fastapi.openapi.utils import get_openapi
-    
     openapi_schema = get_openapi(
         title="Skladový Systém WMS",
         version="1.0.0",
         description="API pre správu recyklačného skladu",
         routes=app.routes,
     )
-    
-    # Bezpečné pridanie bezpečnostného protokolu
     openapi_schema["components"]["securitySchemes"] = {
-        "OAuth2PasswordBearer": {
-            "type": "oauth2",
-            "flows": {
-                "password": {
-                    "tokenUrl": "auth/login",
-                    "scopes": {}
-                }
-            }
-        }
+        "OAuth2PasswordBearer": {"type": "oauth2", "flows": {"password": {"tokenUrl": "auth/login", "scopes": {}}}}
     }
-    
-    # Aplikovanie zámku globálne na dokumentáciu
     openapi_schema["security"] = [{"OAuth2PasswordBearer": []}]
     app.openapi_schema = openapi_schema
     return app.openapi_schema
@@ -69,3 +55,4 @@ app.openapi = custom_openapi
 @app.get("/")
 def root():
     return {"message": "Recycling WMS API running"}
+

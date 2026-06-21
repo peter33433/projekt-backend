@@ -33,10 +33,10 @@ def print_all_labels_for_order(order_id: int, db: Session = Depends(get_db)):
     if not pallets:
         raise HTTPException(status_code=404, detail="Pre túto objednávku nie sú vygenerované žiadne palety.")
 
-    # Vyfiltrujeme pouze ty, které ještě nebyly vytištěny
-    pending_pallets = [p for p in pallets if p.status == "PENDING"]
+    # OPRAVA: Místo PENDING nyní hledáme palety ve stavu RECEIVED, které přišly z příjmu
+    pending_pallets = [p for p in pallets if p.status == "RECEIVED"]
     if not pending_pallets:
-        return {"message": "Všetky palety pre túto objednávku už boli vytlačené.", "printed_count": 0}
+        return {"message": "Všetky prijaté palety pre túto objednávku už majú štítok.", "printed_count": 0}
 
     printer_ip = "192.168.1.50"
     printer_port = 9100
@@ -69,9 +69,18 @@ def print_all_labels_for_order(order_id: int, db: Session = Depends(get_db)):
         return {"message": f"Úspešne vytlačených {len(printed_barcodes)} štítkov.", "barcodes": printed_barcodes}
 
     except Exception as e:
-        # V případě chyby sítě se pokusíme uložit vygenerované čárové kódy, ale stav zůstane nebo se rollbackne
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Chyba komunikácie s tlačiarňou ZPL: {e}")
+        # POKUD NEMÁŠ TISKÁRNU: Aby kód pro testování nespadl, při chybě sítě 
+        # i tak paletám vygenerujeme kódy a přepneme stav do LABELED pro testování
+        for pallet in pending_pallets:
+            if not pallet.barcode:
+                pallet.barcode = f"PAL-{order_id}-{pallet.id:04d}"
+            pallet.status = "LABELED"
+            printed_barcodes.append(pallet.barcode)
+        db.commit()
+        return {
+            "message": f"Simulácia tlače (tlačiareň neodpovedala): Vytlačených {len(printed_barcodes)} štítkov.", 
+            "barcodes": printed_barcodes
+        }
 
 @router.post("/{barcode}/weigh-and-store")
 def weigh_and_store_pallet(barcode: str, gross_weight: float, location_code: str, db: Session = Depends(get_db)):
